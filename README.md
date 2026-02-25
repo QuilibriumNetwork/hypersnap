@@ -1,6 +1,8 @@
 # Snapchain
 
-The open-source, canonical implementation of Farcaster's [Snapchain](https://github.com/farcasterxyz/protocol/discussions/207) network. 
+The open-source, canonical implementation of Farcaster's [Snapchain](https://github.com/farcasterxyz/protocol/discussions/207) network.
+
+<!-- CI test trigger - Feb 25, 2026 --> 
 
 ![snapchain](https://github.com/user-attachments/assets/e5a041db-e3ae-4250-ad6b-7043ad648d34)
 
