@@ -77,12 +77,23 @@ pub enum DBProvider {
     ReadOnly(DB),
 }
 
-#[derive(Default)]
 pub struct RocksDB {
     inner: RwLock<Option<DBProvider>>,
 
     pub path: String,
     pub db_options_type: SnapchainDbOptimizationType,
+    block_cache: Option<rocksdb::Cache>,
+}
+
+impl Default for RocksDB {
+    fn default() -> Self {
+        RocksDB {
+            inner: RwLock::new(None),
+            path: String::new(),
+            db_options_type: SnapchainDbOptimizationType::Default,
+            block_cache: None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -100,44 +111,87 @@ impl std::fmt::Debug for RocksDB {
 
 impl RocksDB {
     pub fn new(path: &str) -> RocksDB {
-        info!({ path }, "Opening RocksDB database");
-
-        RocksDB {
-            inner: RwLock::new(None),
-            path: path.to_string(),
-            db_options_type: SnapchainDbOptimizationType::Default,
-        }
+        Self::new_with_cache(path, SnapchainDbOptimizationType::Default, None)
     }
 
     pub fn new_with_options(path: &str, db_options_type: SnapchainDbOptimizationType) -> RocksDB {
+        Self::new_with_cache(path, db_options_type, None)
+    }
+
+    pub fn new_with_cache(
+        path: &str,
+        db_options_type: SnapchainDbOptimizationType,
+        block_cache: Option<rocksdb::Cache>,
+    ) -> RocksDB {
         info!({ path }, "Opening RocksDB database");
 
         RocksDB {
             inner: RwLock::new(None),
             path: path.to_string(),
             db_options_type,
+            block_cache,
         }
     }
 
     pub fn open_bulk_write_shard_db(db_dir: &str, shard_id: u32) -> Arc<RocksDB> {
-        let db = RocksDB::new_with_options(
+        Self::open_bulk_write_shard_db_with_cache(db_dir, shard_id, None)
+    }
+
+    pub fn open_bulk_write_shard_db_with_cache(
+        db_dir: &str,
+        shard_id: u32,
+        block_cache: Option<rocksdb::Cache>,
+    ) -> Arc<RocksDB> {
+        let db = RocksDB::new_with_cache(
             format!("{}/shard-{}", db_dir, shard_id).as_str(),
             SnapchainDbOptimizationType::BulkWriteOptimized,
+            block_cache,
         );
         db.open().unwrap();
         Arc::new(db)
     }
 
     pub fn open_shard_db(db_dir: &str, shard_id: u32) -> Arc<RocksDB> {
-        let db = RocksDB::new(format!("{}/shard-{}", db_dir, shard_id).as_str());
+        Self::open_shard_db_with_cache(db_dir, shard_id, None)
+    }
+
+    pub fn open_shard_db_with_cache(
+        db_dir: &str,
+        shard_id: u32,
+        block_cache: Option<rocksdb::Cache>,
+    ) -> Arc<RocksDB> {
+        let db = RocksDB::new_with_cache(
+            format!("{}/shard-{}", db_dir, shard_id).as_str(),
+            SnapchainDbOptimizationType::Default,
+            block_cache,
+        );
         db.open().unwrap();
         Arc::new(db)
     }
 
     pub fn open_global_db(db_dir: &str) -> Arc<RocksDB> {
-        let db = RocksDB::new(format!("{}/global", db_dir).as_str());
+        Self::open_global_db_with_cache(db_dir, None)
+    }
+
+    pub fn open_global_db_with_cache(
+        db_dir: &str,
+        block_cache: Option<rocksdb::Cache>,
+    ) -> Arc<RocksDB> {
+        let db = RocksDB::new_with_cache(
+            format!("{}/global", db_dir).as_str(),
+            SnapchainDbOptimizationType::Default,
+            block_cache,
+        );
         db.open().unwrap();
         Arc::new(db)
+    }
+
+    fn apply_block_cache_opts(&self, opts: &mut Options) {
+        if let Some(cache) = &self.block_cache {
+            let mut block_opts = rocksdb::BlockBasedOptions::default();
+            block_opts.set_block_cache(cache);
+            opts.set_block_based_table_factory(&block_opts);
+        }
     }
 
     pub fn open(&self) -> Result<(), RocksdbError> {
@@ -166,6 +220,7 @@ impl RocksDB {
 
         opts.create_if_missing(true); // Creates a database if it does not exist
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        self.apply_block_cache_opts(&mut opts);
 
         let mut tx_db_opts = rocksdb::TransactionDBOptions::default();
         tx_db_opts.set_default_lock_timeout(5000); // 5 seconds
@@ -192,6 +247,7 @@ impl RocksDB {
         let mut opts = Options::default();
         opts.create_if_missing(false);
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        self.apply_block_cache_opts(&mut opts);
 
         match rocksdb::DB::open_for_read_only(&opts, self.path.clone(), true) {
             Ok(db) => {
@@ -200,6 +256,7 @@ impl RocksDB {
                     inner: RwLock::new(Some(provider)),
                     path: self.path.clone(),
                     db_options_type: SnapchainDbOptimizationType::default(),
+                    block_cache: self.block_cache.clone(),
                 };
                 Ok(rdb)
             }
