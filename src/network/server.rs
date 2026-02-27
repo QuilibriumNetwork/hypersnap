@@ -621,6 +621,7 @@ impl MyHubService {
                     ) {
                         Ok(Some(proof)) => return Ok((proof.fid, name_type)),
                         Ok(None) => continue,
+                        Err(e) if e.code == "not_found" => continue,
                         Err(e) => {
                             error!("error fetching fname proof: {:?}", e);
                             return Err(Status::internal("store error"));
@@ -647,6 +648,7 @@ impl MyHubService {
                             }
                         }
                         Ok(None) => continue,
+                        Err(e) if e.code == "not_found" => continue,
                         Err(e) => {
                             error!("error fetching username proof: {:?}", e);
                             return Err(Status::internal("store error"));
